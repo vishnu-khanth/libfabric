@@ -325,6 +325,20 @@ provider path is used. Some examples:
 	FI_PROVIDER_PATH=+/opt/libfabric/libtcp-fi.so
 	FI_PROVIDER_PATH=@+/opt/libfabric/libtcp-fi.so
 
+The FI_PROVIDER_LIB_FILTER variable can be used to load only some of the DL
+providers that are found, which avoids the cost of loading and initializing
+providers that will not be used. It is set to a comma separated list of patterns,
+which may use shell wildcards, and a DL provider library is loaded only if its
+file name matches one of the patterns. If the list begins with the '^' symbol,
+it is negated: the libraries that match are not loaded. The filter applies to
+every DL provider library, whether it is found under a directory, given as a
+preferred provider, or searched with 'dlopen' in step 1 above. It only depends
+on the library file names, and does not change which of the loaded providers
+are reported, which is controlled by FI_PROVIDER. For example:
+
+	FI_PROVIDER_LIB_FILTER="libverbs*-fi.so,librxm-fi.so"
+	FI_PROVIDER_LIB_FILTER="^libucx-fi.so"
+
 The fi_info utility, which is included as part of the libfabric package, can
 be used to retrieve information about which providers are available in the
 system.  Additionally, it can retrieve a list of all environment variables

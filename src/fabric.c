@@ -56,6 +56,7 @@
 
 #ifdef HAVE_LIBDL
 #include <dlfcn.h>
+#include <fnmatch.h>
 #endif
 
 
@@ -661,10 +662,40 @@ void ofi_create_filter(struct ofi_filter *filter, const char *raw_filter)
 }
 
 #ifdef HAVE_LIBDL
+/* File name patterns given by FI_PROVIDER_LIB_FILTER */
+static struct ofi_filter prov_lib_filter;
+
+/* Return true if FI_PROVIDER_LIB_FILTER excludes the DL provider library */
+static bool ofi_dl_lib_filtered(const char *lib)
+{
+	const char *name;
+	int i;
+
+	if (!prov_lib_filter.names)
+		return false;
+
+	name = strrchr(lib, '/');
+	name = name ? name + 1 : lib;
+
+	for (i = 0; prov_lib_filter.names[i]; i++) {
+		if (!fnmatch(prov_lib_filter.names[i], name, 0))
+			return prov_lib_filter.negated;
+	}
+	return !prov_lib_filter.negated;
+}
+
 static void ofi_reg_dl_prov(const char *lib, bool lib_known_to_exist)
 {
 	void *dlhandle;
 	struct fi_provider* (*inif)(void);
+
+	if (ofi_dl_lib_filtered(lib)) {
+		if (lib_known_to_exist)
+			FI_INFO(&core_prov, FI_LOG_CORE,
+				"%s excluded by FI_PROVIDER_LIB_FILTER, "
+				"not loading\n", lib);
+		return;
+	}
 
 	FI_DBG(&core_prov, FI_LOG_CORE, "opening provider lib %s\n", lib);
 
@@ -782,6 +813,7 @@ static void ofi_load_dl_prov(void)
 {
 	char **dirs;
 	char *provdir = NULL;
+	char *filter = NULL;
 	void *dlhandle;
 	int i;
 
@@ -803,7 +835,29 @@ static void ofi_load_dl_prov(void)
 			"other providers with the same name. "
 			"(default: " PROVDLDIR ")");
 
+	fi_param_define(NULL, "provider_lib_filter", FI_PARAM_STRING,
+			"Only load the DL provider libraries whose file names "
+			"match one of the given comma separated patterns, "
+			"which may use shell wildcards, e.g. "
+			"libverbs*-fi.so,librxm-fi.so.  If the list starts "
+			"with ^, the libraries that match are not loaded "
+			"instead.  This applies to all DL provider libraries, "
+			"including preferred providers and the libraries "
+			"searched by name. (default: load all libraries)");
+
 	fi_param_get_str(NULL, "provider_path", &provdir);
+
+	fi_param_get_str(NULL, "provider_lib_filter", &filter);
+	if (filter && strlen(filter)) {
+		if (*filter == '^') {
+			prov_lib_filter.negated = true;
+			filter++;
+		}
+		prov_lib_filter.names = ofi_split_and_alloc(filter, ",", NULL);
+		if (!prov_lib_filter.names)
+			FI_WARN(&core_prov, FI_LOG_CORE,
+				"unable to parse FI_PROVIDER_LIB_FILTER\n");
+	}
 
 #if HAVE_RESTRICTED_DL
 	if (!provdir || !strlen(provdir)) {
@@ -841,7 +895,7 @@ static void ofi_load_dl_prov(void)
 		ofi_free_string_array(dirs);
 
 		if (num_dirs)
-			return;
+			goto out;
 
 		/*
 		 * When FI_PROVIDER_PATH contains only preferred providers, go
@@ -854,6 +908,10 @@ static void ofi_load_dl_prov(void)
 			ofi_free_string_array(dirs);
 		}
 	}
+
+out:
+	ofi_free_filter(&prov_lib_filter);
+	memset(&prov_lib_filter, 0, sizeof(prov_lib_filter));
 }
 
 #else /* HAVE_LIBDL */
